@@ -8,3 +8,11 @@
 - 本轮未重跑完整浏览器交互测试、Windows 构建或 Windows 真机测试。
 
 历史 v2.1 曾通过 9 项 Python 测试和 12 项合成浏览器流程。原始记录保留于 StrawFrameStudio 历史提交 `53804b9b2a212ba797b0c914c55ee9e2a2f17109`，不作为本轮新测。
+
+## 2.3.0 — 2026-11-07
+
+- Python unit suite: 9 tests passed in the editing environment.
+- JavaScript syntax check and git whitespace check passed.
+- `node tests/annotation_logic.cjs` passed: exercises actual frontend fill, coverage, navigation and summary code; verifies labels survive background fill, uncertain coverage stays null and zero-valued frame/time fields survive export.
+- Browser smoke suite updated for safe fill, review navigation and export confirmation. This run could NOT execute browser workflows: Chromium launch failed with `socket() failed: Operation not permitted`. No claim of completed visual or cross-platform validation for 2.3.0.
+- All tests use synthetic data, not verified human research labels. macOS/Windows launcher and real annotation throughput still require local use.

@@ -96,6 +96,13 @@ async function run() {
   await page.keyboard.press('Enter');
   assert.equal(await page.evaluate(() => count(current).straw_pixels), afterBrush + 400);
   check('completion rejects unmarked pixels and polygon paints original pixels');
+  const beforeFill = await page.evaluate(() => count(current));
+  await page.locator('#fill-background').click();
+  assert.deepEqual(await page.evaluate(() => count(current)), beforeFill);
+  await page.locator('#review-next').click();
+  assert.match(await page.locator('#review-position').textContent(), /第 1/);
+  assert.deepEqual(await page.evaluate(() => count(current)), beforeFill);
+  check('safe background fill preserves labels and tile review leaves masks unchanged');
   const expected = await page.evaluate(() => count(current));
   await page.locator('#more').click();
   await page.locator('#notes').fill('SYNTHETIC TEST ONLY — not human research labels');
@@ -108,6 +115,10 @@ async function run() {
   const saved = await (await responsePromise).json();
   assert.equal(saved.all_format_checks_pass, true);
   assert.equal(saved.completed, 1);
+  assert(fs.readFileSync(path.join(saved.folder, 'summary.csv'), 'utf8').includes('source_time_base'));
+  assert(fs.existsSync(path.join(saved.folder, 'START_HERE.txt')));
+  await page.locator('#close-export').click();
+  check('concise summary and export confirmation');
   const manifest = JSON.parse(fs.readFileSync(path.join(saved.folder, 'manifest.json')));
   const record = manifest.records[0];
   assert.deepEqual(record.statistics, expected);
@@ -137,6 +148,7 @@ async function run() {
   await page.locator('#more').click();
   await page.locator('#backup').click();
   const backup = await (await backupPromise).json();
+  await page.locator('#close-export').click();
   assert.equal(backup.completed, 1); assert.equal(backup.drafts, 1);
   const backupManifest = JSON.parse(fs.readFileSync(path.join(backup.folder, 'manifest.json')));
   assert(backupManifest.records.some(r => r.status === 'draft' && r.mask_path.startsWith('drafts/')));
