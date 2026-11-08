@@ -72,4 +72,4 @@ node tests/annotation_logic.cjs
 node tests/annotation_ui_smoke.cjs
 ```
 
-浏览器测试另需 Playwright、pngjs 和 Chromium；可用 `ANNOTATION_CHROME` 指定浏览器。测试仅使用合成图。验证记录见 [TEST_REPORT.md](TEST_REPORT.md)，Windows 打包见 [BUILD.md](BUILD.md)。源码更新不会自动更新旧 exe。
+浏览器测试另需 Playwright、pngjs 和 Chromium；可用 `ANNOTATION_CHROME` 指定浏览器。每次推送由 GitHub Actions 自动运行全部三项：Python 测试在 Linux、Windows、macOS 上运行，浏览器流程在 Linux Chromium 中运行（`.github/workflows/tests.yml`）。测试仅使用合成图。验证记录见 [TEST_REPORT.md](TEST_REPORT.md)，Windows 打包见 [BUILD.md](BUILD.md)。源码更新不会自动更新旧 exe。

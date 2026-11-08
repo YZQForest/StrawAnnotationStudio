@@ -1,0 +1,57 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Server, package validation and token checks (standard library only).
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -p test_annotation.py -v
+
+  # Frontend logic in Node, then the full synthetic browser workflow in Chromium.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install test-only packages
+        run: npm install --no-save --no-package-lock playwright@1.65.0 pngjs@7.0.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Frontend logic
+        run: node tests/annotation_logic.cjs
+      - name: Browser workflow (synthetic images)
+        env:
+          PYTHON: python
+          ANNOTATION_TEST_OUTPUT: ${{ runner.temp }}/annotation-ui
+        run: node tests/annotation_ui_smoke.cjs
+      - name: Keep browser test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: annotation-ui-output
+          path: ${{ runner.temp }}/annotation-ui
+          if-no-files-found: ignore

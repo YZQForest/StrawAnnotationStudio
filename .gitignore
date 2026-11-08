@@ -10,3 +10,4 @@ venv/
 /run_*/
 /.staging_*/
 /ffmpeg/*.exe
+node_modules/
