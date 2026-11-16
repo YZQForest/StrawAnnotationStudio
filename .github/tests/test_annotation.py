@@ -5,15 +5,11 @@ import json
 from pathlib import Path
 import struct
 import tempfile
-import threading
 import unittest
-import urllib.error
-import urllib.request
 import zipfile
 import zlib
 
-from strawannotate.bundle import validate_bundle, save_bundle
-from strawannotate.server import create_server
+from bundle import validate_bundle, save_bundle
 
 
 def png(width, height, values):
@@ -107,27 +103,6 @@ class AnnotationBundleTests(unittest.TestCase):
             self.assertNotEqual(a['folder'],b['folder'])
             self.assertTrue((Path(a['folder'])/'human_masks/synthetic_mask.png').is_file())
 
-    def test_loopback_service_save_and_token_gate(self):
-        with tempfile.TemporaryDirectory() as d:
-            server=create_server(output=Path(d),port=0)
-            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-            try:
-                info=json.load(urllib.request.urlopen(server.annotation_url+'api/catalog'))
-                for asset in ('app.js', 'style.css'):
-                    with urllib.request.urlopen(server.annotation_url+asset) as response:
-                        self.assertEqual(response.status, 200)
-                        self.assertGreater(len(response.read()), 0)
-                request=urllib.request.Request(server.annotation_url+'api/export',data=fixture()[0],method='POST')
-                with self.assertRaises(urllib.error.HTTPError) as error: urllib.request.urlopen(request)
-                self.assertEqual(error.exception.code,403)
-                error.exception.close()
-                request.add_header('X-Annotation-Token',info['token'])
-                result=json.load(urllib.request.urlopen(request));self.assertEqual(result['completed'],1)
-                request=urllib.request.Request(server.annotation_url+'api/export',data=b'not a zip',method='POST',headers={'X-Annotation-Token':info['token']})
-                with self.assertRaises(urllib.error.HTTPError) as error: urllib.request.urlopen(request)
-                self.assertEqual(error.exception.code,400)
-                error.exception.close()
-            finally: server.shutdown();server.server_close()
 
-
-if __name__=='__main__': unittest.main()
+if __name__ == "__main__":
+    unittest.main()

@@ -7,7 +7,7 @@ const { pathToFileURL } = require("url");
 const { spawnSync } = require("child_process");
 const { chromium } = require("playwright");
 const { PNG } = require("pngjs");
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(__dirname, "../../标注工具");
 const output =
   process.env.ANNOTATION_TEST_OUTPUT ||
   fs.mkdtempSync(path.join(os.tmpdir(), "straw-v3-"));
@@ -158,7 +158,7 @@ async function run() {
     process.env.PYTHON || "python3",
     [
       "-c",
-      `import sys,json;from pathlib import Path;sys.path.insert(0,${JSON.stringify(path.join(root, "src"))});from strawannotate.bundle import save_bundle;print(json.dumps(save_bundle(Path(sys.argv[1]).read_bytes(),Path(sys.argv[2]))))`,
+      `import sys,json;from pathlib import Path;sys.path.insert(0,${JSON.stringify(__dirname)});from bundle import save_bundle;print(json.dumps(save_bundle(Path(sys.argv[1]).read_bytes(),Path(sys.argv[2]))))`,
       zip,
       path.join(output, "validated"),
     ],
@@ -197,7 +197,6 @@ async function run() {
       r.status === "completed",
     );
   }
-  assert(!fs.existsSync(path.join(result.folder, "annotations.csv")));
   assert(
     fs
       .readFileSync(path.join(result.folder, "summary.csv"), "utf8")

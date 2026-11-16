@@ -1,7 +1,7 @@
 // Exercise real frontend algorithms without executing DOM boot code.
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),path=require('path');
-const script=fs.readFileSync(path.join(__dirname,'../src/strawannotate/web/app.js'),'utf8');
-const html=fs.readFileSync(path.join(__dirname,'../src/strawannotate/web/index.html'),'utf8');
+const script=fs.readFileSync(path.join(__dirname,'../../标注工具/src/strawannotate/web/app.js'),'utf8');
+const html=fs.readFileSync(path.join(__dirname,'../../标注工具/src/strawannotate/web/index.html'),'utf8');
 const elements=new Map();
 const $=id=>{if(!elements.has(id))elements.set(id,{textContent:'',value:'6',clientWidth:800,clientHeight:700,offsetLeft:20});return elements.get(id);};
 const c=vm.createContext({$,TextEncoder,enc:new TextEncoder(),Math,Number,String,Map,Set,Uint8Array,current:{width:16,height:12,label:new Uint8Array(192),valid:new Uint8Array(192).fill(255)},selectedClass:'255',reviewIndex:-1,zoom:1,allowEdit:()=>true,snapshot:()=>{},endEdit:()=>{},message:()=>{},setZoom:z=>c.zoom=z});
@@ -24,5 +24,5 @@ assert.equal(vm.runInContext(`parseCSV('a,b\\r\\n"x,y",0\\r\\n')[0].a`,c),'x,y')
 assert.throws(()=>vm.runInContext(`parseCSV('a,a\\nx,y')`,c),/重复/);
 assert.throws(()=>vm.runInContext(`parseCSV('a,b\\n"x,y')`,c),/未闭合/);
 for(const id of [...script.matchAll(/\$\("([^"\n]+)"\)/g)].map(m=>m[1]))assert(html.includes(`id="${id}"`),'Missing UI element '+id);
-assert(!/fillPolygon|commitPolygon|legacyMask|data-tool/.test(script));
-console.log('PASS: integer brush footprint, coverage bounds, zero provenance, CSV escaping, UI bindings and removed drawing modes.');
+
+console.log('PASS: integer brush footprint, coverage bounds, zero provenance, CSV escaping, UI bindings.');

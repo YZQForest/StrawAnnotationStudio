@@ -10,8 +10,6 @@ let db,
   tasks = [],
   current = null,
   bitmap = null,
-  backend = null,
-  catalog = [],
   selectedClass = "255",
   zoom = 1,
   showOverlay = true,
@@ -120,7 +118,6 @@ function newSession(name = "", role = "primary") {
     created_at: now(),
     updated_at: now(),
     identity_locked: false,
-    catalog_project_id: backend?.project_id || null,
     task_descriptors: [],
     last_task: null,
   };
@@ -350,11 +347,7 @@ async function hydrate(t) {
     t.source_bytes = t.blob.size;
     return t;
   }
-  if (!t.blob) {
-    const response = await fetch(t.url);
-    if (!response.ok) throw Error("图片读取失败：" + t.file_name);
-    t.blob = await response.blob();
-  }
+  if (!t.blob) throw Error("本地图片不可用：" + t.file_name);
   t.source_bytes = t.blob.size;
   const hash = await sha(t.blob);
   if (t.image_sha256 && t.image_sha256 !== hash)
@@ -711,13 +704,7 @@ async function addFiles(files) {
     const imageHash = await sha(file),
       existing = tasks.find((t) => t.image_sha256 === imageHash);
     if (existing) continue;
-    const entry = catalog.find(
-      (c) =>
-        c.file_name.split("/").at(-1) === file.name &&
-        c.image_sha256 === imageHash,
-    );
-    const sample_id =
-      entry?.sample_id || `${safeId(file.name)}__${imageHash.slice(0, 12)}`;
+    const sample_id = `${safeId(file.name)}__${imageHash.slice(0, 12)}`;
     if (tasks.some((t) => t.sample_id === sample_id)) continue;
     const t = {
       sample_id,
@@ -725,7 +712,7 @@ async function addFiles(files) {
       source_bytes: file.size,
       blob: file,
       image_sha256: imageHash,
-      source: entry?.source || {
+      source: {
         original_file_name: file.name,
         relative_path: file.webkitRelativePath || file.name,
         source_provenance: "user_import",
@@ -746,16 +733,6 @@ async function addFiles(files) {
   const metadata = [...files].filter((f) => f.name === "metadata.csv");
   if (metadata.length === 1) await attachProvenance(metadata[0]);
   message(`图片已导入，共 ${tasks.length} 项。`);
-}
-async function addCatalog(starterOnly) {
-  for (const t of catalog) {
-    if (starterOnly && !t.starter) continue;
-    if (!tasks.some((x) => x.sample_id === t.sample_id))
-      tasks.push({ ...t, status: "not_started" });
-  }
-  await saveSession();
-  refreshTasks();
-  if (!current && tasks.length) await selectTask(tasks[0].sample_id);
 }
 // CSV attachment preserves video/time provenance without guessing from filenames.
 function parseCSV(text) {
@@ -1006,22 +983,21 @@ function csvCell(v) {
   const x = String(v ?? "");
   return '"' + x.replaceAll('"', '""') + '"';
 }
-async function createBundle(includeDrafts = true) {
+async function createBundle() {
   if (!session.annotator.trim()) throw Error("请先填写标注者。");
   if (gesture) throw Error("先完成或取消当前描绘，再导出。");
   await saveCurrent();
-  const chosen = tasks.filter((t) => includeDrafts || t.status === "completed");
-  if (!chosen.length) throw Error("请先导入图片并标注。");
+  if (!tasks.length) throw Error("请先导入图片并标注。");
   const files = new Map(),
     records = [];
   let packageBytes = 0;
-  for (let i = 0; i < chosen.length; i++) {
-    const t = await hydrate(chosen[i]);
+  for (let i = 0; i < tasks.length; i++) {
+    const t = await hydrate(tasks[i]);
     if (packageBytes + t.blob.size > 256 * 1024 ** 2)
       throw Error(
         "本批原图和标签超过 256 MB，请分成较小批次导出。已有浏览器进度保留。",
       );
-    $("busy-text").textContent = `准备数据包 ${i + 1} / ${chosen.length}`;
+    $("busy-text").textContent = `准备数据包 ${i + 1} / ${tasks.length}`;
     const id = t.sample_id,
       done = t.status === "completed",
       prefix = done ? "human_masks" : "drafts";
@@ -1061,7 +1037,7 @@ async function createBundle(includeDrafts = true) {
         completed_at: t.completed_at || null,
         inspection: t.inspection || {},
         inspection_confirmation_method:
-          t.inspection_confirmation_method || "previous_tool_checklist",
+          t.inspection_confirmation_method || null,
         notes: t.notes || "",
         statistics: count(t),
         human_correctness_verified: false,
@@ -1115,35 +1091,8 @@ async function createBundle(includeDrafts = true) {
   );
   return zipStore(files);
 }
-async function exportBundle(drafts) {
-  const blob = await createBundle(drafts);
-  if (backend) {
-    $("busy-text").textContent = "本机校验并保存…";
-    try {
-      const res = await fetch("/api/export", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/zip",
-          "X-Annotation-Token": backend.token,
-        },
-        body: blob,
-      });
-      const result = await res.json();
-      if (!res.ok) throw Error(result.error || "本机保存失败");
-      message(
-        `已校验保存：${result.folder}（完成 ${result.completed}，草稿 ${result.drafts}）`,
-      );
-      $("save-status").textContent = "研究包已保存";
-      showExport(result.folder, result.completed, result.drafts);
-      return result;
-    } catch (e) {
-      download(
-        blob,
-        `straw_annotations_${session.id.slice(0, 8)}_${Date.now()}.zip`,
-      );
-      throw Error("本机保存失败，已下载 ZIP 备用：" + e.message);
-    }
-  }
+async function exportBundle() {
+  const blob = await createBundle();
   download(
     blob,
     `straw_annotations_${session.id.slice(0, 8)}_${Date.now()}.zip`,
@@ -1151,7 +1100,7 @@ async function exportBundle(drafts) {
   showExport(
     "浏览器下载目录中的 ZIP 文件",
     tasks.filter((t) => t.status === "completed").length,
-    drafts ? tasks.filter((t) => t.status !== "completed").length : 0,
+    tasks.filter((t) => t.status !== "completed").length,
   );
 }
 async function decodePlane(bytes, w, h, allowed) {
@@ -1185,7 +1134,7 @@ async function decodePlane(bytes, w, h, allowed) {
 }
 async function importBundle(file) {
   if (file.size > 256 * 1024 ** 2)
-    throw Error("数据包超过 256 MB。请用旧版恢复后分批迁移。");
+    throw Error("数据包超过 256 MB，无法载入。");
   const files = readZip(new Uint8Array(await file.arrayBuffer())),
     m = JSON.parse(dec.decode(files.get("manifest.json") || new Uint8Array()));
   if (m.schema_version !== SCHEMA) throw Error("不是 v2 研究数据包。");
@@ -1323,7 +1272,6 @@ async function importBundle(file) {
     ...m.session,
     id: stagedId,
     imported_from_session_id: m.session.id,
-    catalog_project_id: backend?.project_id || null,
     identity_locked: true,
   };
   session = importedSession;
@@ -1362,7 +1310,7 @@ $("package-input").onchange = async (e) => {
     await work("校验并恢复…", () => importBundle(e.target.files[0]));
   e.target.value = "";
 };
-$("export").onclick = () => work("导出全部进度…", () => exportBundle(true));
+$("export").onclick = () => work("导出全部进度…", () => exportBundle());
 $("annotator").onchange = lockIdentity;
 for (const id of ["search", "filter"]) $(id).oninput = refreshTasks;
 document.querySelectorAll("[data-class]").forEach(
@@ -1544,36 +1492,17 @@ window.addEventListener("beforeunload", (e) => {
 });
 async function boot() {
   await initDB();
-  if (location.protocol !== "file:")
-    try {
-      const r = await fetch("/api/catalog");
-      if (r.ok) {
-        const data = await r.json();
-        if (data.token && Array.isArray(data.samples)) {
-          backend = data;
-          catalog = data.samples;
-        }
-      }
-    } catch {}
   let last;
   try {
     last = localStorage.getItem("straw-annotation-current-v2");
   } catch {}
   session = last ? await get("sessions", last) : null;
   if (!session) session = newSession();
-  if (
-    backend &&
-    session.catalog_project_id &&
-    session.catalog_project_id !== backend.project_id
-  )
-    session = newSession();
-  if (backend) session.catalog_project_id = backend.project_id;
   tasks = session.task_descriptors || [];
   setIdentity();
   refreshTasks();
   await refreshSessions();
   if (tasks.length) await selectTask(session.last_task || tasks[0].sample_id);
-  else if (catalog.length) await addCatalog(false);
   else await saveSession();
 }
 $("more").onclick = () => {

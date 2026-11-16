@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  # Server, package validation and token checks (standard library only).
+  # Independent export validation (Python standard library).
   python:
     strategy:
       fail-fast: false
@@ -22,9 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Unit tests
-        env:
-          PYTHONPATH: 标注工具/src
-        run: python -m unittest discover -s 标注工具/tests -p test_annotation.py -v
+        run: python -m unittest discover -s .github/tests -p test_annotation.py -v
 
   # Frontend logic in Node, then the full synthetic browser workflow in Chromium.
   browser:
@@ -42,12 +40,12 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Frontend logic
-        run: node 标注工具/tests/annotation_logic.cjs
+        run: node .github/tests/annotation_logic.cjs
       - name: Browser workflow (synthetic images)
         env:
           PYTHON: python
           ANNOTATION_TEST_OUTPUT: ${{ runner.temp }}/annotation-ui
-        run: node 标注工具/tests/annotation_ui_smoke.cjs
+        run: node .github/tests/annotation_ui_smoke.cjs
       - name: Keep synthetic browser test output
         if: always()
         uses: actions/upload-artifact@v7
