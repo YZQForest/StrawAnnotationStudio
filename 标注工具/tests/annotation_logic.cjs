@@ -11,6 +11,8 @@ for(const name of ['count','csvCell','addSummary','reviewTile','parseCSV','write
 }
 vm.runInContext('stamp([5.5,5.5])',c);
 for(let y=0;y<12;y++)for(let x=0;x<16;x++)assert.equal(c.current.label[y*16+x],(x-5)**2+(y-5)**2<=9?255:0);
+$('brush-number').value='1';
+vm.runInContext('stamp([0.01,0.01])',c);assert.equal(c.current.label[0],255);
 c.current.label=new Uint8Array([255,128,64,64,0]);c.current.valid=new Uint8Array([255,255,255,0,255]);
 assert.equal(vm.runInContext('count(current).coverage_pp',c),null);
 assert.equal(vm.runInContext('count(current).coverage_lower_pp',c),25);

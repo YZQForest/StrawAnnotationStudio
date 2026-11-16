@@ -79,6 +79,28 @@ class AnnotationBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'coverage'):
             validate_bundle(pack(files))
 
+    def test_nonfinite_statistic_rejected(self):
+        _, files = fixture()
+        m = json.loads(files['manifest.json']); r = m['records'][0]
+        r['statistics']['coverage_lower_pp'] = float('nan')
+        files[r['metadata_path']] = json.dumps(r).encode()
+        m['file_sha256'][r['metadata_path']] = hashlib.sha256(files[r['metadata_path']]).hexdigest()
+        files['manifest.json'] = json.dumps(m).encode()
+        with self.assertRaisesRegex(ValueError, 'coverage'):
+            validate_bundle(pack(files))
+
+    def test_draft_cannot_enter_training_directory(self):
+        _, files = fixture(completed=False)
+        m = json.loads(files['manifest.json']); r = m['records'][0]
+        old = r['training_mask_path']; new = old.replace('draft_training_masks/', 'training_masks/')
+        r['training_mask_path'] = new
+        files[new] = files.pop(old); m['file_sha256'][new] = m['file_sha256'].pop(old)
+        files[r['metadata_path']] = json.dumps(r).encode()
+        m['file_sha256'][r['metadata_path']] = hashlib.sha256(files[r['metadata_path']]).hexdigest()
+        files['manifest.json'] = json.dumps(m).encode()
+        with self.assertRaisesRegex(ValueError, 'isolated'):
+            validate_bundle(pack(files))
+
     def test_unique_exports_preserve_previous_rater(self):
         with tempfile.TemporaryDirectory() as d:
             a=save_bundle(fixture()[0],Path(d));b=save_bundle(fixture()[0],Path(d))
@@ -91,6 +113,10 @@ class AnnotationBundleTests(unittest.TestCase):
             thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
             try:
                 info=json.load(urllib.request.urlopen(server.annotation_url+'api/catalog'))
+                for asset in ('app.js', 'style.css'):
+                    with urllib.request.urlopen(server.annotation_url+asset) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertGreater(len(response.read()), 0)
                 request=urllib.request.Request(server.annotation_url+'api/export',data=fixture()[0],method='POST')
                 with self.assertRaises(urllib.error.HTTPError) as error: urllib.request.urlopen(request)
                 self.assertEqual(error.exception.code,403)

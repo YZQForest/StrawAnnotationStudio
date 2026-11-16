@@ -32,8 +32,7 @@ const now = () => new Date().toISOString(),
   uid = () =>
     crypto.randomUUID
       ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  clone = (x) => structuredClone(x);
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 function message(text, error = false) {
   $("toast").textContent = text;
   $("toast").classList.toggle("error", error);
@@ -348,6 +347,7 @@ async function hydrate(t) {
   const saved = await get("tasks", session.id + "/" + t.sample_id);
   if (saved) {
     Object.assign(t, saved.task);
+    t.source_bytes = t.blob.size;
     return t;
   }
   if (!t.blob) {
@@ -355,6 +355,7 @@ async function hydrate(t) {
     if (!response.ok) throw Error("图片读取失败：" + t.file_name);
     t.blob = await response.blob();
   }
+  t.source_bytes = t.blob.size;
   const hash = await sha(t.blob);
   if (t.image_sha256 && t.image_sha256 !== hash)
     throw Error("图片 SHA-256 不匹配，停止载入：" + t.file_name);
@@ -510,6 +511,12 @@ function stamp(p) {
   const radius = Number($("brush-number").value) / 2,
     w = current.width,
     h = current.height;
+  if (radius <= 0.5) {
+    const x = Math.floor(p[0]),
+      y = Math.floor(p[1]);
+    if (x >= 0 && x < w && y >= 0 && y < h) write(y * w + x);
+    return;
+  }
   const x0 = Math.max(0, Math.floor(p[0] - radius)),
     x1 = Math.min(w - 1, Math.ceil(p[0] + radius)),
     y0 = Math.max(0, Math.floor(p[1] - radius)),
@@ -1004,8 +1011,7 @@ async function createBundle(includeDrafts = true) {
   if (gesture) throw Error("先完成或取消当前描绘，再导出。");
   await saveCurrent();
   const chosen = tasks.filter((t) => includeDrafts || t.status === "completed");
-  if (!chosen.length)
-    throw Error("尚无完成项。可以先标记完成，或备份全部进度。");
+  if (!chosen.length) throw Error("请先导入图片并标注。");
   const files = new Map(),
     records = [];
   let packageBytes = 0;
@@ -1198,91 +1204,124 @@ async function importBundle(file) {
     !m.records?.length
   )
     throw Error("数据包缺少标注者、类型或记录。");
-  const imported = [],
-    ids = new Set();
-  for (const r of m.records) {
-    if (
-      r.annotator !== m.session.annotator ||
-      r.annotation_role !== m.session.role ||
-      r.session_id !== m.session.id
-    )
-      throw Error("单图标注者或工程身份不一致。");
-    if (ids.has(r.sample_id)) throw Error("任务 ID 重复。");
-    ids.add(r.sample_id);
-    if (
-      JSON.stringify(JSON.parse(dec.decode(files.get(r.metadata_path)))) !==
-      JSON.stringify(r)
-    )
-      throw Error("单图记录与清单不同。");
-    const bytes = files.get(r.image_path);
-    if ((await sha(bytes)) !== r.image_sha256) throw Error("原图哈希不同。");
-    const blob = new Blob([bytes], {
-        type: /\.png$/i.test(r.image_path) ? "image/png" : "image/jpeg",
-      }),
-      im = await createImageBitmap(blob, { imageOrientation: "none" });
-    if (im.width !== r.width || im.height !== r.height) {
-      im.close();
-      throw Error("原图尺寸与记录不同。");
-    }
-    im.close();
-    const label = await decodePlane(
-        files.get(r.mask_path),
-        r.width,
-        r.height,
-        [0, 64, 128, 255],
-      ),
-      valid = await decodePlane(
-        files.get(r.valid_roi_path),
-        r.width,
-        r.height,
-        [0, 255],
-      ),
-      training = await decodePlane(
-        files.get(r.training_mask_path),
-        r.width,
-        r.height,
-        [0, 1, 255],
-      );
-    for (let i = 0; i < label.length; i++)
-      if (
-        training[i] !==
-        (!valid[i] || label[i] === 64 || label[i] === 128
-          ? 255
-          : label[i] === 255
-            ? 1
-            : 0)
-      )
-        throw Error("训练掩码映射错误。");
-    const task = { ...r, file_name: r.original_file_name, label, valid, blob };
-    const stats = count(task);
-    for (const [k, v] of Object.entries(stats))
-      if (
-        v === null
-          ? r.statistics[k] !== null
-          : !Number.isFinite(r.statistics[k]) ||
-            Math.abs(v - r.statistics[k]) > 1e-6
-      )
-        throw Error("覆盖率统计与掩码不符。");
-    if (!["completed", "draft"].includes(r.status))
-      throw Error("未知完成状态。");
-    if (
-      r.status === "completed" &&
-      (!stats.valid_pixels ||
-        stats.unmarked_pixels ||
-        ![
-          "ground_roi_checked",
-          "full_image_checked",
-          "human_annotation_confirmed",
-        ].every((k) => r.inspection?.[k]))
-    )
-      throw Error("完成状态缺少检查或仍有未标地面。");
-    imported.push(task);
-  }
+  if (!db) throw Error("浏览器存储不可用，无法安全恢复。");
   await saveCurrent();
-  const existing = await get("sessions", m.session.id);
+  const imported = [],
+    ids = new Set(),
+    stagedId = uid(),
+    stagedKeys = [];
+  try {
+    for (const r of m.records) {
+      if (
+        !Number.isInteger(r.width) ||
+        !Number.isInteger(r.height) ||
+        r.width <= 0 ||
+        r.height <= 0 ||
+        r.width * r.height > 40_000_000
+      )
+        throw Error("数据包图片尺寸不受支持。");
+      if (
+        typeof r.sample_id !== "string" ||
+        !r.sample_id ||
+        /[\\/:]/.test(r.sample_id) ||
+        r.sample_id.includes("..")
+      )
+        throw Error("无效图片 ID。");
+      if (
+        r.annotator !== m.session.annotator ||
+        r.annotation_role !== m.session.role ||
+        r.session_id !== m.session.id
+      )
+        throw Error("单图标注者或工程身份不一致。");
+      if (ids.has(r.sample_id)) throw Error("任务 ID 重复。");
+      ids.add(r.sample_id);
+      if (
+        JSON.stringify(JSON.parse(dec.decode(files.get(r.metadata_path)))) !==
+        JSON.stringify(r)
+      )
+        throw Error("单图记录与清单不同。");
+      const bytes = files.get(r.image_path);
+      if ((await sha(bytes)) !== r.image_sha256) throw Error("原图哈希不同。");
+      const blob = new Blob([bytes], {
+          type: /\.png$/i.test(r.image_path) ? "image/png" : "image/jpeg",
+        }),
+        im = await createImageBitmap(blob, { imageOrientation: "none" });
+      if (im.width !== r.width || im.height !== r.height) {
+        im.close();
+        throw Error("原图尺寸与记录不同。");
+      }
+      im.close();
+      const label = await decodePlane(
+          files.get(r.mask_path),
+          r.width,
+          r.height,
+          [0, 64, 128, 255],
+        ),
+        valid = await decodePlane(
+          files.get(r.valid_roi_path),
+          r.width,
+          r.height,
+          [0, 255],
+        ),
+        training = await decodePlane(
+          files.get(r.training_mask_path),
+          r.width,
+          r.height,
+          [0, 1, 255],
+        );
+      for (let i = 0; i < label.length; i++)
+        if (
+          training[i] !==
+          (!valid[i] || label[i] === 64 || label[i] === 128
+            ? 255
+            : label[i] === 255
+              ? 1
+              : 0)
+        )
+          throw Error("训练掩码映射错误。");
+      const task = {
+        ...r,
+        file_name: r.original_file_name,
+        label,
+        valid,
+        blob,
+      };
+      const stats = count(task);
+      for (const [k, v] of Object.entries(stats))
+        if (
+          v === null
+            ? r.statistics[k] !== null
+            : !Number.isFinite(r.statistics[k]) ||
+              Math.abs(v - r.statistics[k]) > 1e-6
+        )
+          throw Error("覆盖率统计与掩码不符。");
+      if (!["completed", "draft"].includes(r.status))
+        throw Error("未知完成状态。");
+      if (
+        r.status === "completed" &&
+        (!stats.valid_pixels ||
+          stats.unmarked_pixels ||
+          ![
+            "ground_roi_checked",
+            "full_image_checked",
+            "human_annotation_confirmed",
+          ].every((k) => r.inspection?.[k]))
+      )
+        throw Error("完成状态缺少检查或仍有未标地面。");
+      // Stage into a new namespace; a validation/storage error never replaces the active batch.
+      const key = stagedId + "/" + task.sample_id;
+      await put("tasks", { key, task });
+      stagedKeys.push(key);
+      imported.push(descriptor({ ...task, source_bytes: blob.size }));
+    }
+  } catch (error) {
+    const tx = db.transaction("tasks", "readwrite");
+    for (const key of stagedKeys) tx.objectStore("tasks").delete(key);
+    throw error;
+  }
   const importedSession = {
     ...m.session,
-    id: existing ? uid() : m.session.id,
+    id: stagedId,
     imported_from_session_id: m.session.id,
     catalog_project_id: backend?.project_id || null,
     identity_locked: true,
@@ -1290,10 +1329,6 @@ async function importBundle(file) {
   session = importedSession;
   tasks = imported;
   current = null;
-  for (const t of tasks) {
-    await put("tasks", { key: session.id + "/" + t.sample_id, task: t });
-    release(t);
-  }
   await saveSession();
   setIdentity();
   refreshTasks();
@@ -1394,7 +1429,8 @@ $("new-session").onclick = async () => {
   )
     return;
   await work("创建新批次…", async () => {
-    await saveCurrent();
+    if (!(await saveCurrent()))
+      throw Error("当前进度未保存，请先导出数据包，再新建一批。");
     session = newSession(name);
     tasks = [];
     current = null;
@@ -1418,7 +1454,8 @@ $("sessions").onchange = async () => {
   const target = $("sessions").value;
   $("more-dialog").close();
   await work("恢复批次…", async () => {
-    await saveCurrent();
+    if (!(await saveCurrent()))
+      throw Error("当前进度未保存，请先导出数据包，再切换批次。");
     release(current);
     session = await get("sessions", target);
     if (!session) throw Error("批次不存在。");

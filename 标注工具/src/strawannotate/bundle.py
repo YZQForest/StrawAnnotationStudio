@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 from pathlib import Path, PurePosixPath
 import struct
 import uuid
@@ -183,17 +184,21 @@ def validate_bundle(data: bytes | Path) -> tuple[dict, dict[str, bytes]]:
             "coverage_pp": 100 * s / n if n and not u and not unmarked else None,
         }.items():
             actual = stats.get(key)
-            if (value is None and actual is not None) or (value is not None and (actual is None or abs(actual - value) > 1e-6)):
+            if (value is None and actual is not None) or (value is not None and (not isinstance(actual, (int, float)) or not math.isfinite(actual) or abs(actual - value) > 1e-6)):
                 raise ValueError(f"Incorrect coverage statistic: {key}")
         if record["status"] == "completed":
             if unmarked or not n or not all(record.get("inspection", {}).get(k) is True for k in ("ground_roi_checked", "full_image_checked", "human_annotation_confirmed")):
                 raise ValueError("Completed annotation lacks inspection or contains unmarked ground")
             if not record["mask_path"].startswith("human_masks/"):
                 raise ValueError("Completed mask must be in human_masks")
+            if not record["training_mask_path"].startswith("training_masks/"):
+                raise ValueError("Completed training mask must be in training_masks")
             completed += 1
         elif record["status"] == "draft":
             if not record["mask_path"].startswith("drafts/"):
                 raise ValueError("Draft must be isolated from human_masks")
+            if not record["training_mask_path"].startswith("draft_training_masks/"):
+                raise ValueError("Draft training mask must be isolated from training_masks")
             drafts += 1
         else:
             raise ValueError("Unknown completion status")
