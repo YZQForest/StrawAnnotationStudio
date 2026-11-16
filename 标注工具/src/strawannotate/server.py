@@ -62,7 +62,6 @@ def create_server(images: Path | None = None, catalog: Path | None = None,
                   output: Path | None = None, app: Path | None = None, port: int = 8765):
     tasks, paths = build_catalog(images, catalog)
     app = app or Path(__file__).parent / "web" / "index.html"
-    page = app.read_bytes()
     token = secrets.token_urlsafe(32)
     output = (output or Path.home() / "Documents" / "StrawAnnotations").resolve()
     project_id = hashlib.sha256((str(images.resolve() if images else '')+'|'+str(output)).encode()).hexdigest()
@@ -91,6 +90,10 @@ def create_server(images: Path | None = None, catalog: Path | None = None,
             route = urllib.parse.urlsplit(self.path).path
             if route in ("/", "/index.html"):
                 self.answer(200, app.read_bytes(), "text/html; charset=utf-8")
+            elif route in ("/app.js", "/style.css"):
+                target = app.parent / route.lstrip("/")
+                kind = "text/javascript; charset=utf-8" if route.endswith(".js") else "text/css; charset=utf-8"
+                self.answer(200, target.read_bytes(), kind)
             elif route == "/api/catalog":
                 self.answer(200, {"samples": tasks, "token": token, "output": str(output), "project_id": project_id})
             elif route.startswith("/api/images/"):

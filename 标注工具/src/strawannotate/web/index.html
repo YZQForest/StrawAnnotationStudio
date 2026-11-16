@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>秸秆标注工作台 · 画笔版</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>秸秆标注工作台</h1>
+      <div class="identity">
+        <label for="annotator">标注者</label
+        ><input id="annotator" placeholder="姓名或代号" maxlength="80" />
+      </div>
+      <span class="spacer"></span>
+      <button id="quick-import">导入图片</button
+      ><button id="quick-folder">导入文件夹</button>
+      <button id="export" class="primary">导出数据包</button
+      ><button id="more">进度与帮助</button>
+    </header>
+    <main class="workspace">
+      <aside class="panel task-panel">
+        <h2 class="panel-title">
+          已完成 / 全部 <span id="progress">0 / 0</span>
+        </h2>
+        <div class="quickstart">
+          <b>① 填背景</b> 初始化未标区<br /><b>② 用画笔</b> 描绘可见秸秆<br /><b
+            >③ 全图检查</b
+          >
+          完成后导出
+        </div>
+        <div class="task-controls">
+          <input
+            id="search"
+            placeholder="搜索图片"
+            aria-label="搜索图片"
+          /><select id="filter" aria-label="完成状态">
+            <option value="all">全部图片</option>
+            <option value="todo">待完成</option>
+            <option value="completed">已完成</option>
+          </select>
+        </div>
+        <div id="tasks"></div>
+        <div class="task-footer">
+          建议每批 20–50 张。<br />进度存于当前浏览器；<br />结束前请导出数据包。
+        </div>
+      </aside>
+      <section class="panel canvas-panel">
+        <div class="toolbar">
+          <button
+            class="class active"
+            data-class="255"
+            title="1：可见秸秆、枯叶、碎片及地表残留根茎"
+          >
+            <span class="swatch" style="background: #23bc74"></span>秸秆
+          </button>
+          <button
+            class="class"
+            data-class="0"
+            title="2：土壤、石块、活体杂草；也用于擦除误标"
+          >
+            <span class="swatch" style="background: #c9d4ca"></span>背景 / 修正
+          </button>
+          <button
+            class="class"
+            data-class="128"
+            title="3：看不清的地面材料，仍计入覆盖率分母"
+          >
+            <span class="swatch" style="background: #f3aa34"></span>不确定
+          </button>
+          <span class="sep"></span
+          ><label
+            >笔宽<input
+              id="brush-number"
+              type="number"
+              min="1"
+              max="240"
+              value="12"
+              aria-label="原图像素笔宽"
+            />px</label
+          >
+          <button id="undo" title="Ctrl/⌘+Z">撤销</button
+          ><button id="redo" title="Ctrl/⌘+Shift+Z">重做</button>
+          <span class="spacer"></span
+          ><button id="fill-background" class="fill">未标区填背景</button>
+        </div>
+        <div class="hintbar">
+          <span id="draw-hint"
+            >按住鼠标画秸秆 · 空格拖动 · Ctrl/⌘+滚轮缩放</span
+          >
+          <div class="view-tools">
+            <button id="overlay">看原图</button
+            ><button id="zoom-out" aria-label="缩小">−</button
+            ><span id="zoom-level">100%</span
+            ><button id="zoom-in" aria-label="放大">＋</button
+            ><button id="fit">适应</button>
+          </div>
+        </div>
+        <div class="review-tools">
+          <span>覆盖率 <strong id="live-coverage">—</strong></span
+          ><span class="spacer"></span><button id="review-prev">上一格</button
+          ><button id="review-next">逐区检查</button
+          ><span id="review-position">放大检查细碎片与孔隙</span>
+        </div>
+        <div id="viewport">
+          <div id="stage">
+            <canvas id="canvas" aria-label="原图与人工标注画布"></canvas>
+          </div>
+          <div id="empty" class="empty">
+            <strong>导入图片，开始画笔标注</strong>支持 JPG / PNG，无需安装
+            Python 或下载模型。<br />原图尺寸保留，训练标签自动生成。
+          </div>
+        </div>
+        <div class="canvas-footer">
+          <span id="image-title">尚未载入图片</span
+          ><span id="save-status">未开始</span>
+        </div>
+        <div class="finishbar">
+          <span id="unmarked-message">—</span
+          ><label class="check"
+            ><input
+              id="check-complete"
+              type="checkbox"
+            />已检查整幅、有效地面和细碎秸秆，确认人工标注完成</label
+          ><button id="prev">上一张</button><button id="next">下一张</button
+          ><button id="complete" class="primary">完成，下一张</button>
+        </div>
+      </section>
+    </main>
+    <div id="brush-cursor"></div>
+    <div id="toast" class="toast" role="status"></div>
+    <div id="busy" role="status">
+      <div class="spinner"></div>
+      <span id="busy-text">正在处理…</span>
+    </div>
+    <input
+      id="image-input"
+      type="file"
+      accept="image/png,image/jpeg"
+      multiple
+      hidden
+    />
+    <input id="folder-input" type="file" webkitdirectory multiple hidden />
+    <input id="source-input" type="file" accept=".csv" hidden />
+    <input id="package-input" type="file" accept=".zip" hidden />
+    <dialog id="more-dialog">
+      <h2>进度与帮助</h2>
+      <section class="menu-section">
+        <h3>继续标注</h3>
+        <button id="import-package">恢复已导出的 ZIP</button>
+        <label class="field"
+          >本浏览器已存批次<select id="sessions"></select
+        ></label>
+        <p class="hint">
+          <button id="import-source">关联抽帧 metadata.csv（可选）</button
+          ><br />为后续时序研究保留视频编号、帧号及时间；缺失来源留空。
+        </p>
+        <p id="storage-status" class="hint">
+          导出包含完成项及草稿。换电脑或清缓存前，务必保存 ZIP。
+        </p>
+        <div class="menu-buttons">
+          <input
+            id="new-name"
+            placeholder="新批次标注者"
+            maxlength="80"
+            aria-label="新批次标注者"
+          /><button id="new-session">新建一批</button>
+        </div>
+        <p id="identity-hint" class="hint"></p>
+      </section>
+      <section class="menu-section">
+        <h3>少数特殊区域</h3>
+        <div class="menu-buttons">
+          <button data-class="exclude">遮挡 / 非地面</button
+          ><button data-class="restore">恢复有效地面</button
+          ><button data-class="64">擦回未标</button>
+        </div>
+        <p class="hint">
+          仅人物、工具等非地面区域可排除。阴影和难判材料不要排除，请标“不确定”。绿色包含可辨认的枯叶、茎秆、碎片及地表残留根茎；土壤、石块和活体杂草是背景。保留秸秆间的土壤孔隙。
+        </p>
+        <textarea
+          id="notes"
+          placeholder="当前图片备注（可选）"
+          maxlength="4000"
+        ></textarea>
+        <p id="coverage" class="coverage">—</p>
+        <div class="stats">
+          <span>秸秆 <strong id="straw-rate">—</strong></span
+          ><span>不确定 <strong id="uncertain-rate">—</strong></span
+          ><span>未标 <strong id="unmarked-rate">—</strong></span
+          ><span>排除 <strong id="excluded-rate">—</strong></span>
+        </div>
+        <p id="stats-note" class="hint"></p>
+      </section>
+      <section class="menu-section">
+        <h3>怎么操作</h3>
+        <p>
+          1 秸秆，2 背景修正，3 不确定；空格拖动，Ctrl/⌘+滚轮缩放；[ / ]
+          调笔宽；Ctrl/⌘+Z 撤销，Ctrl/⌘+Shift+Z 重做；Tab 切换原图。
+        </p>
+        <p>
+          先填背景，再描绘秸秆，放大检查后勾选并点“完成”。导出后训练读取
+          <b>images + training_masks</b>，按 <b>summary.csv</b> 的 completed
+          行配对。<b>drafts 不可用于正式训练。</b>原图和标签没有缩放。
+        </p>
+      </section>
+      <div class="dialog-actions">
+        <button id="close-more" class="primary">返回标注</button>
+      </div>
+    </dialog>
+    <dialog id="export-dialog">
+      <h2>数据包已导出</h2>
+      <p id="export-count"></p>
+      <p>
+        训练：<b>images + training_masks</b><br />覆盖率和文件对应：<b
+          >summary.csv</b
+        ><br />继续标注：用“恢复已导出的 ZIP”。
+      </p>
+      <div id="export-location"></div>
+      <p class="hint">
+        不确定像素保留在分母中；有不确定区域时输出覆盖率上下界，不虚构精确值。请保留完整
+        ZIP。
+      </p>
+      <div class="dialog-actions">
+        <button id="close-export" class="primary">继续标注</button>
+      </div>
+    </dialog>
+  </body>
+</html>
